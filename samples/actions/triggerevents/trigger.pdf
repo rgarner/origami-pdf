@@ -1,0 +1,140 @@
+%PDF-1.4
+1 0 obj
+<<
+	/AA <<
+		/WC <<
+			/S /JavaScript
+			/JS (app.alert\('Document is closing'\);)
+		>>
+	>>
+	/OpenAction <<
+		/S /JavaScript
+		/JS (app.alert\('Document is opened'\);)
+	>>
+	/Pages 2 0 R
+	/Type /Catalog
+	/Names <<
+		/JavaScript 5 0 R
+	>>
+>>
+endobj
+2 0 obj
+<<
+	/Count 1
+	/Kids [ 3 0 R ]
+	/Type /Pages
+>>
+endobj
+3 0 obj
+<<
+	/MediaBox [ 0 0 795 842 ]
+	/AA <<
+		/C <<
+			/S /JavaScript
+			/JS (app.alert\('Page Closed'\);)
+		>>
+		/O <<
+			/S /JavaScript
+			/JS (app.alert\('Page Opened'\);)
+		>>
+	>>
+	/Parent 2 0 R
+	/Annots [ <<
+	/AA <<
+		/X <<
+			/S /JavaScript
+			/JS (app.alert\('Mouse left'\);)
+		>>
+		/PI <<
+			/S /JavaScript
+			/JS (app.alert\('Parent page is no more visible'\);)
+		>>
+		/D <<
+			/S /JavaScript
+			/JS (app.alert\('Mouse down'\);)
+		>>
+		/E <<
+			/S /JavaScript
+			/JS (app.alert\('Mouse over'\);)
+		>>
+		/PV <<
+			/S /JavaScript
+			/JS (app.alert\('Parent page is visible'\);)
+		>>
+		/PC <<
+			/S /JavaScript
+			/JS (app.alert\('Parent page has closed'\);)
+		>>
+		/PO <<
+			/S /JavaScript
+			/JS (app.alert\('Parent page has opened'\);)
+		>>
+		/U <<
+			/S /JavaScript
+			/JS (app.alert\('Mouse up'\);)
+		>>
+	>>
+	/Rect [ 350 700 415 640 ]
+	/P 3 0 R
+	/Subtype /Screen
+>> <<
+	/IC [ 255 255 0 ]
+	/Rect [ 350 700 415 640 ]
+	/P 3 0 R
+	/Subtype /Square
+>> ]
+	/Contents 4 0 R
+	/Resources <<
+		/Font <<
+			/F1 <<
+				/Name /F1
+				/BaseFont /Helvetica
+				/Subtype /Type1
+				/Type /Font
+			>>
+		>>
+	>>
+	/Type /Page
+>>
+endobj
+4 0 obj
+<<
+	/Length 77
+>>stream
+BT
+/F1 15 Tf
+250 750 Td
+20 TL
+(Pass your mouse over the yellow square) Tj
+ET
+
+endstream
+endobj
+5 0 obj
+<<
+	/Names [ (test) 6 0 R ]
+>>
+endobj
+6 0 obj
+<<
+	/S /JavaScript
+	/JS (app.alert\('Names directory script'\);)
+>>
+endobj
+xref
+0 7
+0000000000 65535 f
+0000000010 00000 n
+0000000284 00000 n
+0000000353 00000 n
+0000001552 00000 n
+0000001686 00000 n
+0000001737 00000 n
+trailer
+<<
+	/Root 1 0 R
+	/Size 7
+>>
+startxref
+1826
+%%EOF
