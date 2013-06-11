@@ -1,0 +1,618 @@
+=begin
+
+= File
+	stream.rb
+
+= Info
+	This file is part of Origami, PDF manipulation framework for Ruby
+	Copyright (C) 2010	Guillaume Delugré <guillaume AT security-labs DOT org>
+	All right reserved.
+	
+	Origami is free software: you can redistribute it and/or modify
+  it under the terms of the GNU Lesser General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or
+  (at your option) any later version.
+
+  Origami is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU Lesser General Public License for more details.
+
+  You should have received a copy of the GNU Lesser General Public License
+  along with Origami.  If not, see <http://www.gnu.org/licenses/>.
+
+=end
+
+require 'strscan'
+
+module Origami
+
+  class InvalidStreamObjectError < InvalidObjectError #:nodoc:
+  end
+
+  #
+  # Class representing a PDF Stream Object.
+  # Streams can be used to hold any kind of data, especially binary data.
+  #
+  class Stream
+    
+    include Origami::Object
+    include StandardObject
+    
+    TOKENS = [ "stream" + WHITECHARS_NORET  + "\\r?\\n", "endstream" ] #:nodoc:
+   
+    @@regexp_open = Regexp.new(WHITESPACES + TOKENS.first)
+    @@regexp_close = Regexp.new(TOKENS.last)
+
+    @@cast_fingerprints = {}
+
+    #
+    # Actually only 5 first ones are implemented, other ones are mainly about image data processing (JPEG, JPEG2000 ... )
+    #
+    @@defined_filters = 
+    [ 
+      :ASCIIHexDecode, 
+      :ASCII85Decode, 
+      :LZWDecode, 
+      :FlateDecode, 
+      :RunLengthDecode,
+      # TODO
+      :CCITTFaxDecode,
+      :JBIG2Decode,
+      :DCTDecode,
+      :JPXDecode,
+      # abbrev
+      :AHx, # ASCIIHexDecode
+      :A85, # ASCII85Decode
+      :LZW, # LZWDecode
+      :Fl,  # FlateDecode
+      :RL,  # RunLengthDecode
+      :CCF, # CCITTFaxDecode
+      :DCT, # DCTDecode
+    ]
+    
+    attr_accessor :dictionary
+     
+    field   :Length,          :Type => Integer, :Required => true
+    field   :Filter,          :Type => [ Name, Array ]
+    field   :DecodeParms,     :Type => [ Dictionary, Array ]
+    field   :F,               :Type => Dictionary, :Version => "1.2"
+    field   :FFilter,         :Type => [ Name, Array ], :Version => "1.2"
+    field   :FDecodeParms,    :Type => [ Dictionary, Array ], :Version => "1.2"
+    field   :DL,              :Type => Integer, :Version => "1.5"
+
+    #
+    # Creates a new PDF Stream.
+    # _data_:: The Stream uncompressed data.
+    # _dictionary_:: A hash representing the Stream attributes.
+    #
+    def initialize(data = "", dictionary = {})
+        super()
+        
+        set_indirect(true)
+       
+        @dictionary, @data = Dictionary.new(dictionary), data
+        @dictionary.parent = self
+    end
+    
+    def pre_build
+      encode!
+     
+      super
+    end
+
+    def post_build
+      self.Length = @rawdata.length
+ 
+      super
+    end
+
+    def method_missing(field, *args) #:nodoc:
+      if field.to_s[-1,1] == '='
+        self[field.to_s[0..-2].to_sym] = args.first
+      else
+        obj = self[field]; 
+        obj.is_a?(Reference) ? obj.solve : obj
+      end
+    end
+    
+    def self.parse(stream, parser = nil) #:nodoc:
+      
+      dictionary = Dictionary.parse(stream, parser)
+      return dictionary if not stream.skip(@@regexp_open)
+
+      length = dictionary[:Length]
+      if not length.is_a?(Integer)
+        rawdata = stream.scan_until(@@regexp_close)
+        if rawdata.nil?
+          raise InvalidStreamObjectError, 
+            "Stream shall end with a 'endstream' statement"
+        end
+      else
+        length = length.value
+        rawdata = stream.peek(length)
+        stream.pos += length
+
+        if not ( unmatched = stream.scan_until(@@regexp_close) )
+          raise InvalidStreamObjectError, 
+            "Stream shall end with a 'endstream' statement"
+        end
+        
+        rawdata << unmatched
+      end
+       
+      stm = 
+        if Origami::OPTIONS[:enable_type_guessing]
+          self.guess_type(dictionary).new('', dictionary.to_h)
+        else
+          Stream.new('', dictionary.to_h)
+        end
+      
+      rawdata.chomp!(TOKENS.last)
+
+      if rawdata[-1,1] == "\n"
+        if rawdata[-2,1] == "\r"
+          rawdata = rawdata[0, rawdata.size - 2]
+        else
+          rawdata = rawdata[0, rawdata.size - 1]
+        end
+      end
+      #rawdata.chomp! if length.is_a?(Integer) and length < rawdata.length
+      
+      stm.rawdata = rawdata
+      stm.file_offset = dictionary.file_offset
+
+      stm
+    end   
+
+    def self.add_type_info(typeclass, key, value) #:nodoc:
+      if not @@cast_fingerprints.has_key?(typeclass) and typeclass.superclass != Stream and
+         @@cast_fingerprints.has_key?(typeclass.superclass)
+        @@cast_fingerprints[typeclass] = @@cast_fingerprints[typeclass.superclass].dup
+      end
+
+      @@cast_fingerprints[typeclass] ||= {}
+      @@cast_fingerprints[typeclass][key.to_o] = value.to_o
+    end
+
+    def self.guess_type(hash) #:nodoc:
+      best_type = Stream
+
+      @@cast_fingerprints.each_pair do |typeclass, keys|
+        best_type = typeclass if keys.all? { |k,v| 
+          hash.has_key?(k) and hash[k] == v 
+        } and typeclass < best_type
+      end
+
+      best_type
+    end
+
+    def set_predictor(predictor, colors = 1, bitspercomponent = 8, columns = 1)
+      
+      filters = self.Filter
+      filters = [ filters ] unless filters.is_a?(::Array)
+
+      if not filters.include?(:FlateDecode) and not filters.include?(:LZWDecode)
+        raise InvalidStreamObjectError, 'Predictor functions can only be used with Flate or LZW filters'
+      end
+
+      layer = filters.index(:FlateDecode) or filters.index(:LZWDecode)
+
+      params = Filter::LZW::DecodeParms.new
+      params[:Predictor] = predictor
+      params[:Colors] = colors if colors != 1
+      params[:BitsPerComponent] = bitspercomponent if bitspercomponent != 8
+      params[:Columns] = columns if columns != 1
+
+      set_decode_params(layer, params)
+  
+      self
+    end
+
+    def cast_to(type)
+      super(type)
+
+      cast = type.new("", self.dictionary.to_h)
+      cast.rawdata = @rawdata.dup
+      cast.no, cast.generation = self.no, self.generation
+      cast.set_indirect(true) 
+      cast.set_pdf(self.pdf) 
+      cast.file_offset = self.file_offset
+
+      cast
+    end
+
+    def value #:nodoc:
+      self
+    end
+ 
+    #
+    # Returns the uncompressed stream content.
+    #
+    def data
+      self.decode! if @data.nil?
+
+      @data 
+    end
+   
+    #
+    # Sets the uncompressed stream content.
+    # _str_:: The new uncompressed data.
+    #
+    def data=(str)      
+      @rawdata = nil
+      @data = str
+    end
+    
+    #
+    # Returns the raw compressed stream content.
+    #
+    def rawdata
+      self.encode! if @rawdata.nil? 
+
+      @rawdata
+    end
+    
+    #
+    # Sets the raw compressed stream content.
+    # _str_:: the new raw data.
+    #
+    def rawdata=(str)
+      @rawdata = str
+      @data = nil
+    end
+    
+    #
+    # Uncompress the stream data.
+    #
+    def decode!
+      self.decrypt! if self.is_a?(Encryption::EncryptedStream)
+      
+      unless is_decoded?
+        filters = self.Filter
+        
+        if filters.nil?
+          @data = @rawdata.dup
+        else
+          case filters
+            when Array, Name then
+              dparams = self.DecodeParms || []
+
+              dparams = [ dparams ] unless dparams.is_a?(::Array)
+              filters = [ filters ] unless filters.is_a?(::Array)
+          
+              @data = @rawdata.dup
+              @data.freeze
+
+              filters.length.times do |layer|
+                params = dparams[layer].is_a?(Dictionary) ? dparams[layer] : {}
+                filter = filters[layer]
+
+                begin
+                  @data = decode_data(@data, filter, params)
+                rescue Filter::InvalidFilterDataError => e
+                  @data = e.decoded_data if e.decoded_data
+                  raise InvalidStreamObjectError, 
+                    "Error while decoding stream #{self.reference}\n\t-> [#{e.class}] #{e.message}"
+                end
+              end
+            else
+              raise InvalidStreamObjectError, "Invalid Filter type parameter"
+          end
+        end
+      end
+      
+      self
+    end
+    
+    #
+    # Compress the stream data.
+    #
+    def encode!
+
+      unless is_encoded?
+        filters = self.Filter
+        
+        if filters.nil?
+          @rawdata = @data.dup
+        else
+          case filters
+            when Array, Name then
+              dparams = self.DecodeParms || []
+
+              dparams = [ dparams ] unless dparams.is_a?(::Array)
+              filters = [ filters ] unless filters.is_a?(::Array)
+          
+              @rawdata = @data.dup
+              (filters.length - 1).downto(0) do |layer|
+                params = dparams[layer].is_a?(Dictionary) ? dparams[layer] : {}
+                filter = filters[layer]
+
+                @rawdata = encode_data(@rawdata, filter, params)
+              end
+            else
+              raise InvalidStreamObjectError, "Invalid filter type parameter"
+          end
+        end
+        
+        self.Length = @rawdata.length
+      end
+      
+      self
+    end
+    
+    def to_s(indent = 1) #:nodoc:
+      
+      content = ""
+      
+      content << @dictionary.to_s(indent)
+      content << "stream" + EOL
+      content << self.rawdata
+      content << EOL << TOKENS.last
+      
+      super(content)
+    end
+    
+    def [](key) #:nodoc:
+      @dictionary[key]
+    end
+    
+    def []=(key,val) #:nodoc:
+      @dictionary[key] = val
+    end
+    
+    def each_key(&b) #:nodoc:
+      @dictionary.each_key(&b)
+    end
+  
+    def self.native_type ; Stream end
+
+    private
+
+    def is_decoded? #:nodoc:
+      not @data.nil?
+    end
+
+    def is_encoded? #:nodoc:
+      not @rawdata.nil?
+    end
+
+    def set_decode_params(layer, params) #:nodoc:
+      dparms = self.DecodeParms
+      unless dparms.is_a? ::Array
+        @dictionary[:DecodeParms] = dparms = []
+      end 
+
+      if layer > dparms.length - 1
+        dparms.concat(::Array.new(layer - dparms.length + 1, Null.new))
+      end
+
+      dparms[layer] = params
+      @dictionary[:DecodeParms] = dparms.first if dparms.length == 1
+
+      self
+    end
+    
+    def decode_data(data, filter, params) #:nodoc:
+      unless @@defined_filters.include?(filter.value)
+        raise InvalidStreamObjectError, "Unknown filter : #{filter}"
+      end
+
+      Origami::Filter.const_get(filter.value.to_s.sub(/Decode$/,"")).decode(data, params)
+    end
+    
+    def encode_data(data, filter, params) #:nodoc:
+      unless @@defined_filters.include?(filter.value)
+        raise InvalidStreamObjectError, "Unknown filter : #{filter}"
+      end
+ 
+      encoded = Origami::Filter.const_get(filter.value.to_s.sub(/Decode$/,"")).encode(data, params)
+
+      if filter.value == :ASCIIHexDecode or filter.value == :ASCII85Decode
+        encoded << Origami::Filter.const_get(filter.value.to_s.sub(/Decode$/,""))::EOD
+      end
+      
+      encoded
+    end
+    
+  end
+
+  #
+  # Class representing an external Stream.
+  #
+  class ExternalStream < Stream
+
+    def initialize(filespec, hash = {})
+
+      hash[:F] = filespec
+      super('', hash)
+    end
+
+  end
+  
+  class InvalidObjectStreamObjectError < InvalidStreamObjectError  #:nodoc:
+  end
+
+  #
+  # Class representing a Stream containing other Objects.
+  #
+  class ObjectStream < Stream
+    
+    include Enumerable
+    
+    NUM = 0 #:nodoc:
+    OBJ = 1 #:nodoc:
+    
+    field   :Type,            :Type => Name, :Default => :ObjStm, :Required => true, :Version => "1.5"
+    field   :N,               :Type => Integer, :Required => true
+    field   :First,           :Type => Integer, :Required => true
+    field   :Extends,         :Type => Stream
+
+    #
+    # Creates a new Object Stream.
+    # _dictionary_:: A hash of attributes to set to the Stream.
+    # _rawdata_:: The Stream data.
+    #
+    def initialize(rawdata = "", dictionary = {})
+      @objects = nil
+     
+      super(rawdata, dictionary)
+    end
+    
+    def pre_build #:nodoc:
+      load! if @objects.nil?
+
+      prolog = ""
+      data = ""
+      objoff = 0
+      @objects.to_a.sort.each do |num,obj|
+        
+        obj.set_indirect(false)
+        obj.objstm_offset = objoff
+
+        prolog << "#{num} #{objoff} "
+        objdata = "#{obj.to_s} "
+        
+        objoff += objdata.size
+        data << objdata
+        obj.set_indirect(true)
+        obj.no = num
+      end
+      
+      self.data = prolog + data
+      
+      @dictionary[:N] = @objects.size
+      @dictionary[:First] = prolog.size
+      
+      super
+    end
+    
+    # 
+    # Adds a new Object to this Stream.
+    # _object_:: The Object to append.
+    #
+    def <<(object)
+      unless object.generation == 0
+        raise InvalidObjectError, "Cannot store an object with generation > 0 in an ObjectStream"
+      end
+
+      if object.is_a?(Stream)
+        raise InvalidObjectError, "Cannot store a Stream in an ObjectStream"
+      end
+
+      load! if @objects.nil?
+      
+      object.no, object.generation = @pdf.alloc_new_object_number if object.no == 0
+      
+      object.set_indirect(true) # object is indirect
+      object.parent = self      # set this stream as the parent
+      object.set_pdf(@pdf)      # indirect objects need pdf information
+      @objects[object.no] = object
+     
+      Reference.new(object.no, 0)
+    end
+    alias :insert :<<
+
+    #
+    # Deletes Object _no_.
+    #
+    def delete(no)
+      load! if @objects.nil?
+
+      @objects.delete(no)
+    end
+
+    #
+    # Returns the index of Object _no_.
+    #
+    def index(no)
+      ind = 0
+      @objects.to_a.sort.each { |num, obj|
+        return ind if num == no
+
+        ind = ind + 1
+      }
+
+      nil
+    end
+
+    # 
+    # Returns a given decompressed object contained in the Stream.
+    # _no_:: The Object number.
+    #
+    def extract(no)
+      load! if @objects.nil?
+    
+      @objects[no]
+    end
+
+    #
+    # Returns a given decompressed object by index.
+    # _index_:: The Object index in the ObjectStream.
+    #
+    def extract_by_index(index)
+      load! if @objects.nil?
+
+      @objects.to_a.sort[index]
+    end
+  
+    #
+    # Returns whether a specific object is contained in this stream.
+    # _no_:: The Object number.
+    #
+    def include?(no)
+      load! if @objects.nil?
+    
+      @objects.include?(no)
+    end
+    
+    #
+    # Iterates over each object in the stream.
+    #
+    def each(&b)
+      load! if @objects.nil? 
+      
+      @objects.values.each(&b)
+    end
+    
+    #
+    # Returns the array of inner objects.
+    #
+    def objects
+      load! if @objects.nil?
+    
+      @objects.values
+    end
+    
+    private
+    
+    def load! #:nodoc:
+      decode!
+      
+      data = StringScanner.new(@data)
+      nums = []
+      offsets = []
+      
+      @dictionary[:N].to_i.times do
+        nums << Integer.parse(data).to_i
+        offsets << Integer.parse(data)
+      end
+      
+      @objects = {}
+      nums.size.times do |i|
+        type = Object.typeof(data)
+        raise InvalidObjectStreamObjectError, 
+          "Bad embedded object format in object stream" if type.nil?
+        
+        embeddedobj = type.parse(data)
+        embeddedobj.set_indirect(true) # object is indirect
+        embeddedobj.no = nums[i]       # object number
+        embeddedobj.parent = self      # set this stream as the parent
+        embeddedobj.set_pdf(@pdf)      # indirect objects need pdf information
+        embeddedobj.objstm_offset = offsets[i]
+        @objects[nums[i]] = embeddedobj
+      end
+      
+    end
+  end
+end
