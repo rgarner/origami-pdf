@@ -82,6 +82,8 @@ if ARGV.empty?
 else
   TARGET = ARGV.shift
 end
+
+Origami::OPTIONS[:enable_type_guessing] = Origami::OPTIONS[:enable_type_propagation] = true
       
 TARGET_DIR = File.basename(TARGET, '.pdf')
 TARGET_FILE = "#{TARGET_DIR}/#{TARGET_DIR}.rb"
@@ -99,11 +101,12 @@ def objectToRuby(obj, inclevel = 0, internalname = nil, do_convert = false)
     when Origami::String
       "'#{obj.value.gsub("'","\\\\'")}'"
     when Origami::Dictionary
-      customtype = nil
-      if obj[:Type] and Origami::DICT_SPECIAL_TYPES.include?(obj[:Type].value)
-        customtype = Origami::DICT_SPECIAL_TYPES[obj[:Type].value]
+      customclass = nil
+      if obj.class != Origami::Dictionary
+        p = (obj.class == Origami::Encoding) ? 0 : 1
+        customclass = obj.class.to_s.split('::')[p..-1].join('::') # strip Origami prefix if there is no collision
       end
-      dictionaryToRuby(obj, inclevel, internalname, customtype)
+      dictionaryToRuby(obj, inclevel, internalname, customclass)
     when Origami::Array
       arrayToRuby(obj, inclevel, internalname)
     when Origami::Stream
