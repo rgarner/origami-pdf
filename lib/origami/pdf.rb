@@ -564,15 +564,15 @@ module Origami
         raise TypeError, "Invalid parameter type : #{no.class}" 
       end
       
-      set = indirect_objects_table
-     
       #
       # Search through accessible indirect objects.
       #
-      if set.include?(target)
-        set[target]
-      elsif use_xrefstm == true
-        # Look into XRef streams.
+      @revisions.each do |rev|
+        return rev.body[target] if rev.body.include?(target)
+      end
+
+      # Look into XRef streams.
+      if use_xrefstm == true
 
         if @revisions.last.has_xrefstm?
           xrefstm = @revisions.last.xrefstm
@@ -1016,10 +1016,6 @@ module Origami
       max
     end
     
-    def indirect_objects_table #:nodoc:
-      @revisions.inject({}) do |set, rev| set.merge(rev.body) end
-    end
- 
     def indirect_objects_by_rev #:nodoc:
       @revisions.inject([]) do |set,rev|
         objset = rev.objects
