@@ -605,8 +605,12 @@ module Origami
         #
         # Lastly search directly into Object streams (might be very slow).
         #
-        stream = set.values.find_all{|obj| obj.is_a?(ObjectStream)}.find do |objstm| objstm.include?(target.refno) end
-        stream && stream.extract(target.refno)
+        @revisions.each do |rev|
+          streams = rev.objects.find_all{|obj| obj.is_a?(ObjectStream) and obj.include?(target.refno)}
+          return streams.first.extract(target.refno) unless streams.empty?
+        end
+
+        nil
       end
       
     end
