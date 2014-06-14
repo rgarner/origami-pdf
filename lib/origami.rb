@@ -31,7 +31,7 @@ if RUBY_VERSION < '1.9'
 end
 
 module Origami
-  VERSION   = "1.2.6"
+  VERSION   = "1.2.7"
   REVISION  = "$Revision$" #:nodoc:
   
   #
